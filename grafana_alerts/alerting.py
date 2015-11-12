@@ -100,10 +100,16 @@ class AlertChecker:
                 target = grafana_target['target']
                 post_parameters = "target={target}&from=-60s&until=now&format=json&maxDataPoints=100".format(
                     target=target)
+
+                if not self.grafana_token:
+                    headers={"Accept": "application/json"}
+                else:
+                    headers={"Accept": "application/json",
+                             "Authorization": "Bearer " + self.grafana_token}
+
                 request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_METRICS,
                                           data=post_parameters,
-                                          headers={"Accept": "application/json",
-                                                   "Authorization": "Bearer " + self.grafana_token})
+                                          headers=headers)
 
                 contents = urllib2.urlopen(request).read()
                 self.responses.append(json.loads(contents))
@@ -151,9 +157,15 @@ class DashboardScanner:
         self.grafana_token = grafana_token
 
     def obtain_dashboards(self):
+        if not self.grafana_token:
+            headers={"Accept": "application/json"}
+        else:
+            headers={"Accept": "application/json",
+                     "Authorization": "Bearer " + self.grafana_token}
+
         request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_DASHBOARDS,
-                                  headers={"Accept": "application/json",
-                                           "Authorization": "Bearer " + self.grafana_token})
+                                  headers=headers)
+
         contents = urllib2.urlopen(request).read()
         print contents
         data = json.loads(contents)
@@ -177,9 +189,14 @@ class Dashboard:
 
     def _obtain_dashboard_rows(self):
         """Get a list of dashboard rows."""
+        if not self.grafana_token:
+            headers={"Accept": "application/json"}
+        else:
+            headers={"Accept": "application/json",
+                     "Authorization": "Bearer " + self.grafana_token}
+
         request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_DASHBOARD.format(slug=self.slug),
-                                  headers={"Accept": "application/json",
-                                           "Authorization": "Bearer " + self.grafana_token})
+                                  headers=headers)
         contents = urllib2.urlopen(request).read()
         # Fix \n inside json values.
         contents = contents.replace('\r\n', '\\r\\n').replace('\n', '\\n')
