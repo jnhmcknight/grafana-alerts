@@ -4,6 +4,7 @@
 
 import logging
 import time
+import re
 
 from grafana_alerts.alerting import AlertCheckerCoordinator
 
@@ -17,9 +18,6 @@ class Launcher:
     def launch(self):
         now = time.strftime("%c")
         configuration = Configuration()
-
-        if not configuration.loglevel:
-           setattr(configuration, "loglevel", logging.WARN)
 
         if not configuration.logfile:
            logging.basicConfig(level=configuration.loglevel)
@@ -38,7 +36,7 @@ class Configuration:
     """Configuration."""
 
     def __init__(self):
-        # TODO make sure the url finishes with '/' or requests could fail.
+        """Defaults"""
         self.grafana_url = 'http://localhost:3130/'
         self.grafana_token = ""
         self.email_from = "grafana-alert@localhost"
@@ -49,6 +47,15 @@ class Configuration:
         self.logfile = "/var/log/grafana_alerts.log"
         self.loglevel = logging.WARNING
         self.read_config()
+
+        if not self.grafana_url:
+           raise SystemExit("ERROR: grafana_url is not set. Aborting.")
+
+        if not self.loglevel:
+           setattr(self, "loglevel", logging.WARNING)
+
+        if not re.search('/$', self.grafana_url):
+           self.grafana_url = self.grafana_url + "/"
 
     def read_config(self):
         try:
