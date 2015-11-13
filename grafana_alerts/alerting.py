@@ -1,6 +1,8 @@
 """Alerts"""
 import urllib2
 import json
+import re
+import logging
 
 import jmespath
 
@@ -15,6 +17,7 @@ _GRAFANA_URL_PATH_OBTAIN_DASHBOARDS = 'api/search?limit=10&query=&tag=monitored'
 _GRAFANA_URL_PATH_DASHBOARD = 'api/dashboards/db/{slug}'
 _GRAFANA_URL_PATH_OBTAIN_METRICS = 'api/datasources/proxy/1/render'
 
+logger = logging.getLogger(__name__)
 
 class NotMonitoreableDashboard(RuntimeError):
     def __init__(self, message):
@@ -36,14 +39,14 @@ class AlertCheckerCoordinator:
         # Get all the dashboards to use for checking
         scanner = DashboardScanner(self.configuration.grafana_url, self.configuration.grafana_token)
         dashboard_data_list = scanner.obtain_dashboards()
-        print dashboard_data_list
+        logger.debug("Dashboard data list: %s" % dashboard_data_list)
         for d in dashboard_data_list:
             try:
-                print "Dashboard: " + d['title']
+                logger.info("Processing Dashboard: %s" % d['title'])
                 # {u'slug': u'typrod-storage', u'tags': [], u'isStarred': False, u'id': 4, u'title': u'TyProd Storage'}
-                dashboard = Dashboard(self.configuration.grafana_url, self.configuration.grafana_token, d['title'], d['slug'], d['tags'])
+                dashboard = Dashboard(self.configuration.grafana_url, self.configuration.grafana_token, d['title'], d['uri'], d['tags'])
                 alert_checkers = dashboard.obtain_alert_checkers()
-                print alert_checkers
+                logger.debug("Alert Checkers: %s" % alert_checkers)
 
                 # For each set of alert checkers, evaluate them
                 for alert_checker in alert_checkers:
@@ -52,7 +55,7 @@ class AlertCheckerCoordinator:
                     # for each set of reported alerts, report whatever is best
                     self.alert_reporter.report(reported_alerts)
             except NotMonitoreableDashboard as e:
-                print "Dashboard {title} cannot be monitored. Reason: {reason}".format(title=d['title'], reason=e.message)
+                logger.exception("Dashboard %s cannot be monitored. Reason: %s" % (d['title'], e.message))
                 continue
 
 
@@ -97,6 +100,7 @@ class AlertChecker:
         """get metrics from grafana server"""
         for grafana_target in self.grafana_targets:
             if not hasattr(grafana_target, 'hide') or not grafana_target['hide']:
+                logger.debug("Grafana Target: %s" % grafana_target)
                 target = grafana_target['target']
                 post_parameters = "target={target}&from=-60s&until=now&format=json&maxDataPoints=100".format(
                     target=target)
@@ -107,6 +111,7 @@ class AlertChecker:
                     headers={"Accept": "application/json",
                              "Authorization": "Bearer " + self.grafana_token}
 
+                logger.info("curl -XPOST '%s' --data '%s'" % (self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_METRICS, post_parameters))
                 request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_METRICS,
                                           data=post_parameters,
                                           headers=headers)
@@ -163,14 +168,14 @@ class DashboardScanner:
             headers={"Accept": "application/json",
                      "Authorization": "Bearer " + self.grafana_token}
 
+        logger.info("curl '%s'" % (self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_DASHBOARDS))
         request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_OBTAIN_DASHBOARDS,
                                   headers=headers)
 
         contents = urllib2.urlopen(request).read()
-        print contents
+        logger.debug("Dashboard Search Result: %s" % contents)
         data = json.loads(contents)
-        dashboards = jmespath.search('dashboards', data)
-        return dashboards
+        return data
 
 
 class Dashboard:
@@ -178,7 +183,7 @@ class Dashboard:
         self.grafana_url = grafana_url
         self.grafana_token = grafana_token
         self.title = title
-        self.slug = slug
+        self.slug = re.sub('^db/', '', slug)
         self.tags = tags
 
     def obtain_alert_checkers(self):
@@ -195,16 +200,17 @@ class Dashboard:
             headers={"Accept": "application/json",
                      "Authorization": "Bearer " + self.grafana_token}
 
+        logger.info("curl '%s'" % (self.grafana_url + _GRAFANA_URL_PATH_DASHBOARD.format(slug=self.slug)))
         request = urllib2.Request(self.grafana_url + _GRAFANA_URL_PATH_DASHBOARD.format(slug=self.slug),
                                   headers=headers)
+
         contents = urllib2.urlopen(request).read()
         # Fix \n inside json values.
         contents = contents.replace('\r\n', '\\r\\n').replace('\n', '\\n')
-        print "Contents is: "
-        print contents
+        logger.debug("Dashboard rows: %s" % contents)
         try:
             data = json.loads(contents)
-            dashboard = jmespath.search('model.rows[*].panels[*]', data)
+            dashboard = jmespath.search('dashboard.rows[*].panels[*]', data)
             return dashboard
         except ValueError:
             raise NotMonitoreableDashboard(
@@ -216,24 +222,24 @@ class Dashboard:
         """
         alert_checkers = []
         for dashboard_row in dashboard_info:
-            print dashboard_row
+            logger.debug("Dashboard row: %s" % dashboard_row)
             # creates alert checkers for each panel in the row.
             # TODO add alert checker creation to a builder dashboard_row2alert_checker_list.
+
             alert_conditions = []  # map of alert conditions( text -> alert parameters)
             for panel in dashboard_row:
-                print panel
-                print panel['type']
+                logger.debug("Panel: %s" % panel)
+                logger.info("Checking Panel: %s is type: %s" % (panel['title'], panel['type']))
+
                 if panel['type'] == "graph":
-                    # print row['leftYAxisLabel']
-                    # print row['y_formats']
                     alert_checker = AlertChecker(self.grafana_url, self.grafana_token, panel['title'], panel['targets'])
                     alert_checkers.append(alert_checker)
+
                 elif panel['type'] == "singlestat":
                     alert_checker = AlertChecker(self.grafana_url, self.grafana_token, panel['title'], panel['targets'])
-                    # print row['thresholds']
                     alert_checkers.append(alert_checker)
+
                 elif panel['type'] == "text":
-                    # print panel['title']
                     if panel['title'] == 'alerts':
                         # read alert parameters to apply to all the alert checkers of this dashboard.
                         for line in panel['content'].splitlines():
@@ -242,7 +248,7 @@ class Dashboard:
                             if len(alert_definition_list) > 1:
                                 alert_conditions.append(alert_definition_list)
                 else:
-                    print "Unknown type {type}. Ignoring.".format(type=panel['type'])
+                    logger.warning("Unknown type %s. Ignoring." % panel['type'])
 
             if len(alert_conditions) > 0:
                 # There are alert conditions, add them to all the alert_checkers.

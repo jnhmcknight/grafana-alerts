@@ -38,6 +38,13 @@ with::
     # Grafana alerts configuration file.
     #
 
+    # Logging settings.
+    #    If logfile is blank, then output goes to console at the desired level.
+    #    If loglevel is blank, then the level is set to WARN. loglevel can be any of:
+    #         DEBUG, INFO, WARN, ERROR, CRITICAL
+    logfile = /tmp/grafana_alerts.log
+    loglevel = WARN
+
     # The URL where grafana server is listening. It must finish with the character '/' (default value: http://localhost:3130)
     grafana_url = http://yourgrafanaserver.com/grafana/
 
